@@ -37,5 +37,6 @@ export interface RecipeRequestPayload {
   dietaryFocus: 'Balanced' | 'High Protein' | 'Low Carb' | 'High Fiber' | 'Gluten Free';
   servings: number;
   extraIngredientAllowance: number;
+  seasonings: string[];
   notes?: string;
 }

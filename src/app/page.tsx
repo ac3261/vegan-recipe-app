@@ -31,6 +31,9 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [customIngredient, setCustomIngredient] = useState("");
   const [selectedIngredients, setSelectedIngredients] = useState<SelectedIngredient[]>([]);
+  const [seasoningQuery, setSeasoningQuery] = useState("");
+  const [customSeasoning, setCustomSeasoning] = useState("");
+  const [selectedSeasonings, setSelectedSeasonings] = useState<string[]>([]);
   const [mealType, setMealType] = useState<RecipeRequestPayload["mealType"]>("Dinner");
   const [dietaryFocus, setDietaryFocus] = useState<RecipeRequestPayload["dietaryFocus"]>("Balanced");
   const [servings, setServings] = useState(2);
@@ -45,6 +48,18 @@ export default function Home() {
     );
   }, [query]);
 
+  const seasoningOptions = useMemo(
+    () => ingredientOptions.filter((item) => item.category === "Seasonings"),
+    []
+  );
+
+  const filteredSeasonings = useMemo(() => {
+    if (!seasoningQuery) return seasoningOptions.slice(0, 20);
+    return seasoningOptions.filter((item) =>
+      item.name.toLowerCase().includes(seasoningQuery.toLowerCase())
+    );
+  }, [seasoningOptions, seasoningQuery]);
+
   const addIngredient = (name: string) => {
     setQuery("");
     setCustomIngredient("");
@@ -57,6 +72,21 @@ export default function Home() {
 
   const removeIngredient = (name: string) => {
     setSelectedIngredients((prev) => prev.filter((item) => item.name !== name));
+  };
+
+  const addSeasoning = (name: string) => {
+    const normalized = name.trim();
+    if (!normalized) return;
+    setSeasoningQuery("");
+    setCustomSeasoning("");
+    setSelectedSeasonings((prev) => {
+      const exists = prev.some((item) => item.toLowerCase() === normalized.toLowerCase());
+      return exists ? prev : [...prev, normalized];
+    });
+  };
+
+  const removeSeasoning = (name: string) => {
+    setSelectedSeasonings((prev) => prev.filter((item) => item !== name));
   };
 
   const updateNote = (index: number, note: string) => {
@@ -80,6 +110,7 @@ export default function Home() {
           dietaryFocus,
           servings,
           extraIngredientAllowance,
+          seasonings: selectedSeasonings,
           notes: notes.trim() || undefined,
         } satisfies RecipeRequestPayload),
       });
@@ -109,8 +140,11 @@ export default function Home() {
   const reset = () => {
     setState({ loading: false });
     setSelectedIngredients([]);
+    setSelectedSeasonings([]);
     setQuery("");
     setCustomIngredient("");
+    setSeasoningQuery("");
+    setCustomSeasoning("");
     setNotes("");
     setExtraIngredientAllowance(0);
   };
@@ -221,6 +255,88 @@ export default function Home() {
                         Remove
                       </button>
                     </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-4 rounded-3xl border border-slate-200 bg-white/70 p-6 shadow-sm shadow-emerald-100/30 backdrop-blur">
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold text-slate-900">Seasonings to feature</h2>
+                <p className="text-sm text-slate-500">
+                  Optional: highlight herbs, spices, or condiments you want the chef to work in.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 md:flex-row">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={seasoningQuery}
+                    onChange={(event) => setSeasoningQuery(event.target.value)}
+                    placeholder="Search basil, cumin, smoked paprika..."
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm transition focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                  />
+                  {seasoningQuery && (
+                    <div className="absolute left-0 right-0 top-[110%] z-20 max-h-60 overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-xl">
+                      {filteredSeasonings.length === 0 ? (
+                        <p className="px-4 py-3 text-sm text-slate-500">No matches found.</p>
+                      ) : (
+                        filteredSeasonings.map((item) => {
+                          const alreadySelected = selectedSeasonings.some(
+                            (seasoning) => seasoning.toLowerCase() === item.name.toLowerCase()
+                          );
+                          return (
+                            <button
+                              key={item.name}
+                              type="button"
+                              onClick={() => addSeasoning(item.name)}
+                              disabled={alreadySelected}
+                              className={`flex w-full items-center justify-between px-4 py-3 text-left text-sm transition hover:bg-emerald-50 ${
+                                alreadySelected ? "cursor-not-allowed text-slate-400" : "text-slate-700"
+                              }`}
+                            >
+                              <span>{item.name}</span>
+                              <span className="text-xs uppercase tracking-wide text-slate-400">Seasoning</span>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={customSeasoning}
+                    onChange={(event) => setCustomSeasoning(event.target.value)}
+                    placeholder="Add custom"
+                    className="w-40 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-sm transition focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => addSeasoning(customSeasoning)}
+                    className="rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-600/30 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                    disabled={!customSeasoning.trim()}
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              {selectedSeasonings.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {selectedSeasonings.map((seasoning) => (
+                    <button
+                      key={seasoning}
+                      type="button"
+                      onClick={() => removeSeasoning(seasoning)}
+                      className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100"
+                    >
+                      <span>{seasoning}</span>
+                      <span aria-hidden="true">×</span>
+                      <span className="sr-only">Remove {seasoning}</span>
+                    </button>
                   ))}
                 </div>
               )}

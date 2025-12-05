@@ -72,6 +72,18 @@ export async function POST(request: Request) {
     : 0;
   payload.extraIngredientAllowance = extraIngredientAllowance;
 
+  const seasoningSet = new Set<string>();
+  if (Array.isArray(payload.seasonings)) {
+    for (const entry of payload.seasonings) {
+      if (typeof entry !== "string") continue;
+      const cleaned = entry.trim();
+      if (!cleaned) continue;
+      if (seasoningSet.size >= 12) break;
+      seasoningSet.add(cleaned);
+    }
+  }
+  payload.seasonings = Array.from(seasoningSet);
+
   const prompt = buildRecipePrompt(payload);
 
   const messages: GroqMessage[] = [
