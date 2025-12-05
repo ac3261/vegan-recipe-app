@@ -23,8 +23,13 @@ export function buildRecipePrompt(payload: RecipeRequestPayload) {
 
   const focusDescription = dietaryFocusDescriptions[payload.dietaryFocus];
   const mealDescription = mealTypeDescriptions[payload.mealType];
+  const allowance = Math.max(0, Math.floor(payload.extraIngredientAllowance ?? 0));
+  const extraIngredientGuidance =
+    allowance === 0
+      ? "Extra ingredients allowed: 0. Do not introduce any new ingredient names beyond the list (assume free access only to salt, pepper, water, and vegetable broth). If you need variety, transform the listed ingredients instead."
+      : `Extra ingredients allowed: ${allowance}. Count every ingredient not listed above, including garnishes. Do not exceed this number. When you use an extra ingredient, append " (extra)" to its item string so the reviewer can audit it. Choose only common vegan pantry staples.`;
 
-  return `You are an expert vegan chef and registered dietitian. Using ONLY the ingredients listed below (you may assume basic pantry staples like salt, pepper, water, or broth), craft a fully plant-based recipe that is nutritionally balanced, exciting, and practical.
+  return `You are an expert vegan chef and registered dietitian. Using the ingredients listed below (and adhering to the extra ingredient guidance), craft a fully plant-based recipe that is nutritionally balanced, exciting, and practical.
 
 Ingredients on hand:\n${ingredientLines || "None specified"}
 
@@ -33,6 +38,8 @@ Constraints:
 - ${mealDescription}
 - ${focusDescription}
 - Respect the number of servings: ${payload.servings}.
+- ${extraIngredientGuidance}
+- Only reference ingredients in the instructions if they appear in the ingredients list above (basic staples excluded).
 ${payload.notes ? `- Additional notes from the cook: ${payload.notes}.` : ""}
 
 Respond in strict JSON with the following structure:

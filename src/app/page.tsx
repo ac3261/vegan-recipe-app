@@ -34,6 +34,7 @@ export default function Home() {
   const [mealType, setMealType] = useState<RecipeRequestPayload["mealType"]>("Dinner");
   const [dietaryFocus, setDietaryFocus] = useState<RecipeRequestPayload["dietaryFocus"]>("Balanced");
   const [servings, setServings] = useState(2);
+  const [extraIngredientAllowance, setExtraIngredientAllowance] = useState(0);
   const [notes, setNotes] = useState("");
   const [state, setState] = useState<GenerationState>({ loading: false });
 
@@ -78,6 +79,7 @@ export default function Home() {
           mealType,
           dietaryFocus,
           servings,
+          extraIngredientAllowance,
           notes: notes.trim() || undefined,
         } satisfies RecipeRequestPayload),
       });
@@ -110,6 +112,7 @@ export default function Home() {
     setQuery("");
     setCustomIngredient("");
     setNotes("");
+    setExtraIngredientAllowance(0);
   };
 
   const canGenerate = selectedIngredients.length > 0 && !state.loading;
@@ -281,6 +284,36 @@ export default function Home() {
                   }}
                   className="w-24 rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm shadow-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
                 />
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <label htmlFor="extra-ingredients" className="text-sm font-semibold text-slate-900">
+                  Extra ingredients allowance
+                </label>
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                  <div className="flex items-center justify-between text-xs font-medium text-slate-600">
+                    <span>Let the chef add up to</span>
+                    <span className="text-emerald-700">{extraIngredientAllowance} {extraIngredientAllowance === 1 ? "ingredient" : "ingredients"}</span>
+                  </div>
+                  <input
+                    id="extra-ingredients"
+                    type="range"
+                    min={0}
+                    max={5}
+                    step={1}
+                    value={extraIngredientAllowance}
+                    onChange={(event) => {
+                      const next = Number(event.target.value);
+                      setExtraIngredientAllowance(
+                        Number.isFinite(next) ? Math.max(0, Math.min(5, Math.round(next))) : 0
+                      );
+                    }}
+                    className="mt-3 w-full accent-emerald-600"
+                  />
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    Allows the assistant to introduce unlisted pantry staples when they improve the recipe.
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-2 md:col-span-2">

@@ -66,6 +66,12 @@ export async function POST(request: Request) {
     );
   }
 
+  const parsedAllowance = Number(payload.extraIngredientAllowance);
+  const extraIngredientAllowance = Number.isFinite(parsedAllowance)
+    ? Math.max(0, Math.min(5, Math.round(parsedAllowance)))
+    : 0;
+  payload.extraIngredientAllowance = extraIngredientAllowance;
+
   const prompt = buildRecipePrompt(payload);
 
   const messages: GroqMessage[] = [
