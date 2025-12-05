@@ -1,5 +1,9 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Documentation
+
+The user-facing guide for Vegan Pantry Chef lives in [`docs/`](docs/). See [`docs/README.md`](docs/README.md) for instructions on running the Docusaurus site locally.
+
 ## Getting Started
 
 First, run the development server:
