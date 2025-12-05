@@ -36,5 +36,6 @@ export interface RecipeRequestPayload {
   mealType: 'Any' | 'Breakfast' | 'Lunch' | 'Dinner' | 'Snack';
   dietaryFocus: 'Balanced' | 'High Protein' | 'Low Carb' | 'High Fiber' | 'Gluten Free';
   servings: number;
+  extraIngredientAllowance: number;
   notes?: string;
 }
