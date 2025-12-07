@@ -76,7 +76,67 @@ function extractJson(text) {
     throw new Error('Model response did not contain JSON.');
   }
   const jsonText = text.slice(start, end + 1);
-  return JSON.parse(jsonText);
+  return parseStrictJson(jsonText);
+}
+
+function parseStrictJson(rawText) {
+  const sanitized = escapeControlCharactersInJson(rawText);
+  try {
+    return JSON.parse(sanitized);
+  } catch (error) {
+    throw new Error(`Failed to parse model JSON response: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function escapeControlCharactersInJson(text) {
+  let result = '';
+  let inString = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (char === '\\') {
+        // Preserve escape sequence and skip the next character.
+        result += char;
+        index += 1;
+        if (index < text.length) {
+          result += text[index];
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = false;
+        result += char;
+        continue;
+      }
+
+      const code = char.charCodeAt(0);
+      if (code <= 0x1f) {
+        if (char === '\n') {
+          result += '\\n';
+        } else if (char === '\r') {
+          result += '\\r';
+        } else if (char === '\t') {
+          result += '\\t';
+        } else {
+          result += `\\u${code.toString(16).padStart(4, '0')}`;
+        }
+      } else {
+        result += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    }
+
+    result += char;
+  }
+
+  return result;
 }
 
 async function callGroq(prompt) {
