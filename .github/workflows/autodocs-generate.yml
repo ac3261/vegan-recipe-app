@@ -5,45 +5,137 @@ on:
     types: [opened, reopened, synchronize]
     branches:
       - main
+  issue_comment:
+    types: [created]
 
 jobs:
   generate-docs:
     if: >-
-      startsWith(github.event.pull_request.head.ref, 'autodocs/') &&
-      github.event.pull_request.base.ref == 'main' &&
-      github.event.pull_request.head.repo.fork == false &&
-      !(github.actor == 'github-actions[bot]' && github.event.action == 'synchronize')
+      (
+        github.event_name == 'pull_request_target' &&
+        startsWith(github.event.pull_request.head.ref, 'autodocs/') &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.head.repo.fork == false &&
+        !(github.actor == 'github-actions[bot]' && github.event.action == 'synchronize')
+      ) || (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        (
+          contains(github.event.comment.body, '[regenerate docs]') ||
+          contains(github.event.comment.body, '[Regenerate docs]') ||
+          contains(github.event.comment.body, '[REGENERATE DOCS]')
+        )
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
     steps:
+      - name: Resolve PR metadata
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const eventName = context.eventName;
+            let pr;
+            if (eventName === 'pull_request_target') {
+              pr = context.payload.pull_request;
+            } else if (eventName === 'issue_comment') {
+              if (!context.payload.issue.pull_request) {
+                core.setOutput('should_continue', 'false');
+                core.info('Issue is not a pull request; skipping.');
+                return;
+              }
+              const comment = context.payload.comment?.body ?? '';
+              if (!comment.toLowerCase().includes('[regenerate docs]')) {
+                core.setOutput('should_continue', 'false');
+                core.info('Comment does not request regeneration; skipping.');
+                return;
+              }
+              const {data} = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.issue.number,
+              });
+              pr = data;
+            } else {
+              core.setOutput('should_continue', 'false');
+              core.setFailed(`Unsupported event: ${eventName}`);
+              return;
+            }
+
+            if (!pr.head.ref.startsWith('autodocs/')) {
+              core.setOutput('should_continue', 'false');
+              core.info(`Skipping branch ${pr.head.ref} (not an autodocs branch).`);
+              return;
+            }
+
+            if (pr.base.ref !== 'main') {
+              core.setOutput('should_continue', 'false');
+              core.info(`Skipping because base ref is ${pr.base.ref}, not main.`);
+              return;
+            }
+
+            if (pr.head.repo?.fork) {
+              core.setOutput('should_continue', 'false');
+              core.info('Skipping because PR originates from a fork.');
+              return;
+            }
+
+            if (
+              eventName === 'pull_request_target' &&
+              context.actor === 'github-actions[bot]' &&
+              context.payload.action === 'synchronize'
+            ) {
+              core.setOutput('should_continue', 'false');
+              core.info('Skipping synchronize event triggered by docs bot.');
+              return;
+            }
+
+            core.setOutput('should_continue', 'true');
+            core.setOutput('head_ref', pr.head.ref);
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('pr_number', pr.number.toString());
+
       - name: Check out repository
+        if: steps.pr.outputs.should_continue == 'true'
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ steps.pr.outputs.head_ref }}
           fetch-depth: 0
 
       - name: Use Node.js 20
+        if: steps.pr.outputs.should_continue == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Resolve autodocs context
+        if: steps.pr.outputs.should_continue == 'true'
         id: context
-        run: node scripts/get-autodocs-context.mjs '${{ github.event.pull_request.head.ref }}'
+        run: node scripts/get-autodocs-context.mjs '${{ steps.pr.outputs.head_ref }}'
+
+      - name: Reset docs directory to base
+        if: steps.pr.outputs.should_continue == 'true'
+        run: |
+          git checkout '${{ steps.context.outputs.base }}' -- docs/docs || true
+          git clean -fd docs/docs || true
 
       - name: Fetch source commits
+        if: steps.pr.outputs.should_continue == 'true'
         run: |
           git fetch origin '${{ steps.context.outputs.code_branch }}'
 
       - name: Generate documentation updates
+        if: steps.pr.outputs.should_continue == 'true'
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           node scripts/auto-update-docs.mjs '${{ steps.context.outputs.base }}' '${{ steps.context.outputs.head }}'
 
       - name: Detect documentation changes
+        if: steps.pr.outputs.should_continue == 'true'
         id: changes
         run: |
           if [[ -n "$(git status --short -- docs/docs)" ]]; then
@@ -52,24 +144,45 @@ jobs:
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Acknowledge regenerate command
+        if: steps.pr.outputs.should_continue == 'true' && github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: 'rocket',
+              });
+            } catch (error) {
+              core.warning(`Failed to add reaction: ${error instanceof Error ? error.message : String(error)}`);
+            }
+
       - name: Install docs dependencies
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.pr.outputs.should_continue == 'true' && steps.changes.outputs.has_changes == 'true'
         run: npm ci --prefix docs
 
       - name: Build docs
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.pr.outputs.should_continue == 'true' && steps.changes.outputs.has_changes == 'true'
         run: npm run build --prefix docs
 
       - name: Commit documentation updates
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.pr.outputs.should_continue == 'true' && steps.changes.outputs.has_changes == 'true'
         run: |
           git config user.name "docs-bot"
           git config user.email "docs-bot@users.noreply.github.com"
           git add docs/docs
-          git commit -m "docs: update for PR #${{ steps.context.outputs.code_pr }}"
+          if git diff --staged --quiet; then
+            echo "No documentation changes detected after regeneration."
+          else
+            git commit -m "docs: update for PR #${{ steps.context.outputs.code_pr }}"
+          fi
 
       - name: Push documentation updates
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.pr.outputs.should_continue == 'true' && steps.changes.outputs.has_changes == 'true'
         env:
           DOCS_BOT_TOKEN: ${{ secrets.DOCS_BOT_TOKEN }}
         run: |
@@ -78,4 +191,4 @@ jobs:
             exit 1
           fi
           git remote set-url origin "https://x-access-token:${DOCS_BOT_TOKEN}@github.com/${{ github.repository }}.git"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          git push origin HEAD:${{ steps.pr.outputs.head_ref }}
