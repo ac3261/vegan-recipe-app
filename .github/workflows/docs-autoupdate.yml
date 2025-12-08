@@ -1,24 +1,27 @@
-name: Auto Docs Updates
+name: Auto Docs Prep
 
 on:
-  pull_request_review:
-    types: [submitted]
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches:
+      - main
 
 jobs:
-  propose-docs:
+  prepare-autodocs-pr:
+    if: >-
+      github.event.pull_request.base.ref == 'main' &&
+      !startsWith(github.event.pull_request.head.ref, 'autodocs/') &&
+      github.actor != 'github-actions[bot]' &&
+      github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
     steps:
-      - name: Fail when review is not approved
-        if: ${{ github.event.review.state != 'approved' || github.event.pull_request.base.ref != 'main' || github.event.pull_request.user.login == 'github-actions[bot]' }}
-        run: |
-          echo "Docs generation requires an approved review on a PR targeting main." >&2
-          exit 1
       - name: Check out repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
 
       - name: Use Node.js 20
@@ -26,32 +29,46 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Generate documentation updates
-        id: generate
+      - name: Evaluate need for docs
+        id: evaluation
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
-          node scripts/auto-update-docs.mjs "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
+          needs=$(node scripts/determine-docs-needed.mjs '${{ github.event.pull_request.base.sha }}' '${{ github.event.pull_request.head.sha }}' '${{ github.event.pull_request.head.ref }}')
+          echo "needs_docs=${needs}" >> "$GITHUB_OUTPUT"
 
-      - name: Detect documentation changes
-        id: changes
+      - name: No documentation required
+        if: steps.evaluation.outputs.needs_docs != 'true'
+        run: echo "Docs update not required for this pull request."
+
+      - name: Derive autodocs branch name
+        if: steps.evaluation.outputs.needs_docs == 'true'
+        id: branch
         run: |
-          if [[ -n "$(git status --short -- docs/docs)" ]]; then
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          CODE_BRANCH='${{ github.event.pull_request.head.ref }}'
+          SUFFIX="${CODE_BRANCH#feature/}"
+          if [ -z "$SUFFIX" ]; then
+            SUFFIX="$CODE_BRANCH"
+          fi
+          echo "suffix=${SUFFIX}" >> "$GITHUB_OUTPUT"
+          echo "full=autodocs/${SUFFIX}" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing autodocs branch
+        if: steps.evaluation.outputs.needs_docs == 'true'
+        id: branch_check
+        run: |
+          if git ls-remote --exit-code origin "refs/heads/${{ steps.branch.outputs.full }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install docs dependencies
-        if: steps.changes.outputs.has_changes == 'true'
-        run: npm ci --prefix docs
-
-      - name: Build docs
-        if: steps.changes.outputs.has_changes == 'true'
-        run: npm run build --prefix docs
+      - name: Autodocs branch already exists
+        if: steps.evaluation.outputs.needs_docs == 'true' && steps.branch_check.outputs.exists == 'true'
+        run: echo "Autodocs branch ${{ steps.branch.outputs.full }} already exists."
 
       - name: Ensure docs bot token is available
-        if: steps.changes.outputs.has_changes == 'true'
+        if: steps.evaluation.outputs.needs_docs == 'true' && steps.branch_check.outputs.exists != 'true'
         env:
           DOCS_BOT_TOKEN: ${{ secrets.DOCS_BOT_TOKEN }}
         run: |
@@ -60,41 +77,33 @@ jobs:
             exit 1
           fi
 
-      - name: Create docs pull request
-        if: steps.changes.outputs.has_changes == 'true'
-        id: cpr
+      - name: Append autodocs log entry
+        if: steps.evaluation.outputs.needs_docs == 'true' && steps.branch_check.outputs.exists != 'true'
+        run: |
+          node scripts/create-autodocs-log-entry.mjs \
+            '${{ steps.branch.outputs.full }}' \
+            '${{ github.event.pull_request.head.ref }}' \
+            '${{ github.event.pull_request.number }}' \
+            '${{ github.event.pull_request.base.sha }}' \
+            '${{ github.event.pull_request.head.sha }}'
+
+      - name: Stage log entry
+        if: steps.evaluation.outputs.needs_docs == 'true' && steps.branch_check.outputs.exists != 'true'
+        run: git add docs/autodocs-log.ndjson
+
+      - name: Open autodocs pull request
+        if: steps.evaluation.outputs.needs_docs == 'true' && steps.branch_check.outputs.exists != 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "docs: update user guide for PR #${{ github.event.pull_request.number }}"
-          branch: autodocs/pr-${{ github.event.pull_request.number }}
-          title: "Docs update for PR #${{ github.event.pull_request.number }}"
+          commit-message: "chore(docs): prepare updates for PR #${{ github.event.pull_request.number }}"
+          branch: ${{ steps.branch.outputs.full }}
+          title: "Docs prep for PR #${{ github.event.pull_request.number }}"
           body: |
-            Automated documentation update for #${{ github.event.pull_request.number }}.
+            Automated documentation preparation for #${{ github.event.pull_request.number }}.
 
-            Generated by the Auto Docs Updates workflow.
+            This PR provides a placeholder change so downstream workflows can generate documentation updates once ready.
           base: main
           token: ${{ secrets.DOCS_BOT_TOKEN }}
           add-paths: |
-            docs/docs/**
+            docs/autodocs-log.ndjson
           labels: automated-docs
-
-      - name: Comment on source pull request
-        if: steps.changes.outputs.has_changes == 'true' && steps.cpr.outputs.pull-request-number != ''
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const docsPrNumber = '${{ steps.cpr.outputs.pull-request-number }}';
-            if (!docsPrNumber) {
-              core.info('No docs PR number available; skipping comment.');
-              return;
-            }
-            const srcPrNumber = context.payload.pull_request.number;
-            const docsPrUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/pull/${docsPrNumber}`;
-            const body = `Documentation updates have been proposed in [PR #${docsPrNumber}](${docsPrUrl}).`;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: srcPrNumber,
-              body,
-            });
