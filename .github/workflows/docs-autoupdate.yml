@@ -6,12 +6,16 @@ on:
 
 jobs:
   propose-docs:
-    if: ${{ github.event.action == 'submitted' && github.event.review.state == 'approved' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.user.login != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
     steps:
+      - name: Fail when review is not approved
+        if: ${{ github.event.review.state != 'approved' || github.event.pull_request.base.ref != 'main' || github.event.pull_request.user.login == 'github-actions[bot]' }}
+        run: |
+          echo "Docs generation requires an approved review on a PR targeting main." >&2
+          exit 1
       - name: Check out repository
         uses: actions/checkout@v4
         with:
