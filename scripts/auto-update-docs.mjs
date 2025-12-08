@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {spawnSync} from 'node:child_process';
-import {writeFileSync, mkdirSync} from 'node:fs';
-import {dirname, join} from 'node:path';
+import {writeFileSync, mkdirSync, existsSync} from 'node:fs';
+import {dirname, join, resolve} from 'node:path';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -191,6 +191,23 @@ function ensureAscii(text) {
   return sanitized;
 }
 
+function removeBrokenMarkdownLinks(markdown, absoluteDocPath) {
+  return markdown.replace(/\[([^\]]+)\]\(([^)]+\.md)\)/gi, (match, label, href) => {
+    const trimmedHref = href.trim();
+
+    if (/^https?:\//i.test(trimmedHref) || trimmedHref.startsWith('#')) {
+      return match;
+    }
+
+    const targetPath = resolve(dirname(absoluteDocPath), trimmedHref);
+    if (existsSync(targetPath)) {
+      return match;
+    }
+
+    return label;
+  });
+}
+
 function writeDocFile(file) {
   if (!file?.path || !file?.content) {
     throw new Error('Missing file path or content in model output.');
@@ -198,9 +215,10 @@ function writeDocFile(file) {
   if (!file.path.startsWith('docs/docs/')) {
     throw new Error(`Refusing to write to non-docs path: ${file.path}`);
   }
-  const normalizedContent = ensureAscii(file.content).replace(/\r\n/g, '\n');
-  const finalContent = normalizedContent.endsWith('\n') ? normalizedContent : `${normalizedContent}\n`;
   const absolutePath = join(process.cwd(), file.path);
+  const asciiContent = ensureAscii(file.content).replace(/\r\n/g, '\n');
+  const safeContent = removeBrokenMarkdownLinks(asciiContent, absolutePath);
+  const finalContent = safeContent.endsWith('\n') ? safeContent : `${safeContent}\n`;
   mkdirSync(dirname(absolutePath), {recursive: true});
   writeFileSync(absolutePath, finalContent, 'utf8');
   console.log(`Updated ${file.path}`);
