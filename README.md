@@ -9,7 +9,7 @@ The user-facing guide for Vegan Pantry Chef lives in [`docs/`](docs/). See [`doc
 This repository includes a GitHub Actions workflow (`.github/workflows/docs-autoupdate.yml`) that proposes doc changes for every pull request targeting `main`. Add a repository secret named `GROQ_API_KEY` so the workflow can call the Groq API. The action opens a follow-up pull request containing any suggested updates to the end-user docs in `docs/docs/`.
 
 ## Getting Started
- 
+
 First, run the development server:
 
 ```bash
