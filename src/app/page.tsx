@@ -151,6 +151,12 @@ export default function Home() {
 
   const canGenerate = selectedIngredients.length > 0 && !state.loading;
 
+  const formatNutritionValue = (value?: string) => {
+    if (!value) return "N/A";
+    const trimmed = value.trim();
+    return trimmed ? trimmed : "N/A";
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-lime-50 px-4 py-10 font-sans text-slate-900">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-10">
@@ -546,15 +552,40 @@ export default function Home() {
 
                   <div className="grid gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/80 p-4">
                     <h4 className="text-sm font-semibold text-emerald-800">Nutrition per serving</h4>
-                    <p className="text-sm font-medium text-emerald-900">{state.recipe.nutrition.calories}</p>
-                    <div className="grid grid-cols-2 gap-2 text-xs text-emerald-800 sm:grid-cols-4">
-                      <span>Protein: {state.recipe.nutrition.macros.protein}</span>
-                      <span>Carbs: {state.recipe.nutrition.macros.carbohydrates}</span>
-                      <span>Fats: {state.recipe.nutrition.macros.fats}</span>
-                      {state.recipe.nutrition.macros.fiber && (
-                        <span>Fiber: {state.recipe.nutrition.macros.fiber}</span>
-                      )}
-                    </div>
+                    <table className="w-full border-separate border-spacing-y-1 text-xs text-emerald-800">
+                      <tbody className="divide-y divide-emerald-100">
+                        <tr>
+                          <th scope="row" className="w-1/2 pr-3 text-left font-semibold text-emerald-900">
+                            Calories
+                          </th>
+                          <td className="text-emerald-900">{formatNutritionValue(state.recipe.nutrition.calories)}</td>
+                        </tr>
+                        <tr>
+                          <th scope="row" className="w-1/2 pr-3 text-left">Protein</th>
+                          <td className="text-emerald-900">{formatNutritionValue(state.recipe.nutrition.macros.protein)}</td>
+                        </tr>
+                        <tr>
+                          <th scope="row" className="w-1/2 pr-3 text-left">Carbohydrates</th>
+                          <td className="text-emerald-900">{formatNutritionValue(state.recipe.nutrition.macros.carbohydrates)}</td>
+                        </tr>
+                        <tr>
+                          <th scope="row" className="w-1/2 pr-3 text-left">Total Fat</th>
+                          <td className="text-emerald-900">{formatNutritionValue(state.recipe.nutrition.macros.fats)}</td>
+                        </tr>
+                        <tr>
+                          <th scope="row" className="w-1/2 pr-3 text-left">Saturated Fat</th>
+                          <td className="text-emerald-900">{formatNutritionValue(state.recipe.nutrition.macros.saturatedFats)}</td>
+                        </tr>
+                        <tr>
+                          <th scope="row" className="w-1/2 pr-3 text-left">Total Sugars</th>
+                          <td className="text-emerald-900">{formatNutritionValue(state.recipe.nutrition.macros.sugars)}</td>
+                        </tr>
+                        <tr>
+                          <th scope="row" className="w-1/2 pr-3 text-left">Fiber</th>
+                          <td className="text-emerald-900">{formatNutritionValue(state.recipe.nutrition.macros.fiber)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
                     {state.recipe.nutrition.micros?.length ? (
                       <p className="text-xs text-emerald-700">
                         Micronutrients: {state.recipe.nutrition.micros.join(", ")}

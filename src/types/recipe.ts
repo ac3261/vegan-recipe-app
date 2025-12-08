@@ -13,7 +13,9 @@ export interface RecipeNutrition {
   macros: {
     protein: string;
     carbohydrates: string;
+    sugars?: string;
     fats: string;
+    saturatedFats?: string;
     fiber?: string;
   };
   micros?: string[];
