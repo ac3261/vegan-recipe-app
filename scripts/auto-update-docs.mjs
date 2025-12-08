@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 import {spawnSync} from 'node:child_process';
-import {writeFileSync, mkdirSync} from 'node:fs';
-import {dirname, join} from 'node:path';
+import {writeFileSync, mkdirSync, existsSync, readFileSync} from 'node:fs';
+import {dirname, join, resolve} from 'node:path';
+
+const DOCS_PROMPTS_DIR = join(process.cwd(), 'docs', 'prompts');
+const GUIDELINES_PATH = join(DOCS_PROMPTS_DIR, 'docs-guidelines.md');
+
+let cachedGuidelines;
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -47,24 +52,30 @@ function getDiff(baseSha, headSha, files) {
 }
 
 function buildPrompt({baseSha, headSha, changedFiles, diffSnippet}) {
-  const fileList = changedFiles.map((file) => `- ${file}`).join('\n');
+  const fileList = changedFiles.map((file) => `- ${file}`).join('\n') || '(none)';
+  const guidelines = loadGuidelines();
   return [
     'The following git diff captures a pull request targeting the Vegan Pantry Chef project.',
     'Update only the user-facing Markdown docs under docs/docs to reflect end-user changes.',
-    'Keep explanations concise and limited to what the recipe-seeking user sees in the app.',
     'If no documentation update is needed, respond with {"files":[],"notes":"No changes"}.',
+    '',
+    'Documentation guidelines:',
+    guidelines,
     '',
     `Base commit: ${baseSha}`,
     `Head commit: ${headSha}`,
     '',
     'Changed files:',
-    fileList || '(none)',
+    fileList,
     '',
     'Unified diff (may be truncated):',
     diffSnippet,
     '',
     'Respond with strict JSON using this schema:',
     '{"files":[{"path":"docs/docs/<file>.md","content":"<entire file contents>"}],"notes":"<short summary>"}',
+    'Update only files inside docs/docs/.',
+    'Replace entire Markdown files in your response; do not send patches.',
+    'When no changes are needed, respond with {"files":[],"notes":"No changes"}.',
     'Do not include code fences or commentary outside JSON. Use only ASCII characters.',
   ].join('\n');
 }
@@ -76,7 +87,118 @@ function extractJson(text) {
     throw new Error('Model response did not contain JSON.');
   }
   const jsonText = text.slice(start, end + 1);
-  return JSON.parse(jsonText);
+  return parseStrictJson(jsonText);
+}
+
+function parseStrictJson(rawText) {
+  const sanitized = escapeControlCharactersInJson(rawText);
+  try {
+    return JSON.parse(sanitized);
+  } catch (error) {
+    const repaired = fixInvalidEscapeSequences(sanitized);
+    if (repaired !== sanitized) {
+      try {
+        return JSON.parse(repaired);
+      } catch (innerError) {
+        throw new Error(
+          `Failed to parse model JSON response after repair: ${
+            innerError instanceof Error ? innerError.message : String(innerError)
+          }`
+        );
+      }
+    }
+    throw new Error(`Failed to parse model JSON response: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function escapeControlCharactersInJson(text) {
+  let result = '';
+  let inString = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (char === '\\') {
+        // Preserve escape sequence and skip the next character.
+        result += char;
+        index += 1;
+        if (index < text.length) {
+          result += text[index];
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = false;
+        result += char;
+        continue;
+      }
+
+      const code = char.charCodeAt(0);
+      if (code <= 0x1f) {
+        if (char === '\n') {
+          result += '\\n';
+        } else if (char === '\r') {
+          result += '\\r';
+        } else if (char === '\t') {
+          result += '\\t';
+        } else {
+          result += `\\u${code.toString(16).padStart(4, '0')}`;
+        }
+      } else {
+        result += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
+function fixInvalidEscapeSequences(text) {
+  let result = '';
+  let inString = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (char === '"' && text[index - 1] !== '\\') {
+      inString = !inString;
+      result += char;
+      continue;
+    }
+
+    if (inString && char === '\\') {
+      const next = text[index + 1];
+      if (!next) {
+        result += '\\\\';
+        continue;
+      }
+
+      if (next === 'u') {
+        const hex = text.slice(index + 2, index + 6);
+        const validUnicodeEscape = /^[0-9a-fA-F]{4}$/.test(hex);
+        if (!validUnicodeEscape) {
+          result += '\\\\';
+          continue;
+        }
+      } else if (!['"', '\\', '/', 'b', 'f', 'n', 'r', 't'].includes(next)) {
+        result += '\\\\';
+        continue;
+      }
+    }
+
+    result += char;
+  }
+
+  return result;
 }
 
 async function callGroq(prompt) {
@@ -84,6 +206,8 @@ async function callGroq(prompt) {
   if (!apiKey) {
     throw new Error('Missing GROQ_API_KEY environment variable.');
   }
+
+  const systemPrompt = loadGuidelines();
 
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -98,8 +222,7 @@ async function callGroq(prompt) {
       messages: [
         {
           role: 'system',
-          content:
-            'You are an expert product copywriter for Vegan Pantry Chef. Update only end-user documentation. Respond with minimal, direct language.',
+          content: systemPrompt,
         },
         {role: 'user', content: prompt},
       ],
@@ -119,6 +242,21 @@ async function callGroq(prompt) {
   return extractJson(content);
 }
 
+function loadGuidelines() {
+  if (!cachedGuidelines) {
+    cachedGuidelines = readPromptFile(GUIDELINES_PATH);
+  }
+  return cachedGuidelines;
+}
+
+function readPromptFile(path) {
+  try {
+    return readFileSync(path, 'utf8').replace(/\r\n/g, '\n').trim();
+  } catch (error) {
+    throw new Error(`Failed to read prompt file at ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function ensureAscii(text) {
   let sanitized = '';
   for (const char of text) {
@@ -131,6 +269,23 @@ function ensureAscii(text) {
   return sanitized;
 }
 
+function removeBrokenMarkdownLinks(markdown, absoluteDocPath) {
+  return markdown.replace(/\[([^\]]+)\]\(([^)]+\.md)\)/gi, (match, label, href) => {
+    const trimmedHref = href.trim();
+
+    if (/^https?:\//i.test(trimmedHref) || trimmedHref.startsWith('#')) {
+      return match;
+    }
+
+    const targetPath = resolve(dirname(absoluteDocPath), trimmedHref);
+    if (existsSync(targetPath)) {
+      return match;
+    }
+
+    return label;
+  });
+}
+
 function writeDocFile(file) {
   if (!file?.path || !file?.content) {
     throw new Error('Missing file path or content in model output.');
@@ -138,9 +293,10 @@ function writeDocFile(file) {
   if (!file.path.startsWith('docs/docs/')) {
     throw new Error(`Refusing to write to non-docs path: ${file.path}`);
   }
-  const normalizedContent = ensureAscii(file.content).replace(/\r\n/g, '\n');
-  const finalContent = normalizedContent.endsWith('\n') ? normalizedContent : `${normalizedContent}\n`;
   const absolutePath = join(process.cwd(), file.path);
+  const asciiContent = ensureAscii(file.content).replace(/\r\n/g, '\n');
+  const safeContent = removeBrokenMarkdownLinks(asciiContent, absolutePath);
+  const finalContent = safeContent.endsWith('\n') ? safeContent : `${safeContent}\n`;
   mkdirSync(dirname(absolutePath), {recursive: true});
   writeFileSync(absolutePath, finalContent, 'utf8');
   console.log(`Updated ${file.path}`);

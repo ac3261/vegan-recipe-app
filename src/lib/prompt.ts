@@ -21,6 +21,10 @@ export function buildRecipePrompt(payload: RecipeRequestPayload) {
     .map((ingredient, index) => `${index + 1}. ${ingredient.name}${ingredient.note ? ` (${ingredient.note})` : ""}`)
     .join("\n");
 
+  const seasoningLines = (payload.seasonings ?? [])
+    .map((seasoning, index) => `${index + 1}. ${seasoning}`)
+    .join("\n");
+
   const focusDescription = dietaryFocusDescriptions[payload.dietaryFocus];
   const mealDescription = mealTypeDescriptions[payload.mealType];
   const allowance = Math.max(0, Math.floor(payload.extraIngredientAllowance ?? 0));
@@ -33,12 +37,15 @@ export function buildRecipePrompt(payload: RecipeRequestPayload) {
 
 Ingredients on hand:\n${ingredientLines || "None specified"}
 
+Preferred seasonings:\n${seasoningLines || "None specified"}
+
 Constraints:
 - The recipe must be 100% vegan (no animal products of any kind).
 - ${mealDescription}
 - ${focusDescription}
 - Respect the number of servings: ${payload.servings}.
 - ${extraIngredientGuidance}
+- Seasonings listed above are provided by the cook. Use them when they reasonably fit the recipe and list them explicitly in the ingredients section; they do not count toward the extra ingredient allowance.
 - Only reference ingredients in the instructions if they appear in the ingredients list above (basic staples excluded).
 ${payload.notes ? `- Additional notes from the cook: ${payload.notes}.` : ""}
 
