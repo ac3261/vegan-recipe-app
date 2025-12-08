@@ -1,0 +1,148 @@
+name: Auto Docs Regeneration
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  regenerate:
+    if: ${{ github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Evaluate trigger comment
+        id: evaluate
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const command = 'generate doc update';
+            const body = (context.payload.comment.body || '').toLowerCase();
+            if (!body.includes(command)) {
+              core.info('No regenerate command found; skipping.');
+              core.setOutput('trigger', 'false');
+              return;
+            }
+
+            const allowed = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+            const association = context.payload.comment.author_association;
+            if (!allowed.includes(association)) {
+              throw new Error(`Only repository maintainers can regenerate docs (current role: ${association}).`);
+            }
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const docsPrNumber = context.payload.issue.number;
+            const docsPr = await github.rest.pulls.get({owner, repo, pull_number: docsPrNumber});
+            const docsBranch = docsPr.data.head.ref;
+
+            if (!docsBranch.startsWith('autodocs/pr-')) {
+              throw new Error('Doc regeneration is only supported on auto-generated docs PRs.');
+            }
+
+            const sourcePrNumber = Number(docsBranch.replace('autodocs/pr-', ''));
+            if (!Number.isFinite(sourcePrNumber)) {
+              throw new Error('Unable to determine source PR number from branch name.');
+            }
+
+            const sourcePr = await github.rest.pulls.get({owner, repo, pull_number: sourcePrNumber});
+
+            core.setOutput('trigger', 'true');
+            core.setOutput('docs_branch', docsBranch);
+            core.setOutput('docs_pr', String(docsPrNumber));
+            core.setOutput('source_pr', String(sourcePrNumber));
+            core.setOutput('base_sha', sourcePr.data.base.sha);
+            core.setOutput('head_sha', sourcePr.data.head.sha);
+
+      - name: Ensure docs bot token is available
+        if: steps.evaluate.outputs.trigger == 'true'
+        env:
+          DOCS_BOT_TOKEN: ${{ secrets.DOCS_BOT_TOKEN }}
+        run: |
+          if [ -z "$DOCS_BOT_TOKEN" ]; then
+            echo "DOCS_BOT_TOKEN secret is required to regenerate docs." >&2
+            exit 1
+          fi
+
+      - name: Check out docs branch
+        if: steps.evaluate.outputs.trigger == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.evaluate.outputs.docs_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.DOCS_BOT_TOKEN }}
+
+      - name: Use Node.js 20
+        if: steps.evaluate.outputs.trigger == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Reset docs directory to main baseline
+        if: steps.evaluate.outputs.trigger == 'true'
+        run: |
+          git fetch origin main
+          git restore --source=origin/main --staged --worktree docs/docs || true
+
+      - name: Regenerate documentation
+        if: steps.evaluate.outputs.trigger == 'true'
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          BASE_SHA: ${{ steps.evaluate.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.evaluate.outputs.head_sha }}
+        run: |
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "GROQ_API_KEY secret is required." >&2
+            exit 1
+          fi
+          node scripts/auto-update-docs.mjs "$BASE_SHA" "$HEAD_SHA"
+
+      - name: Detect documentation changes
+        if: steps.evaluate.outputs.trigger == 'true'
+        id: changes
+        run: |
+          if git status --short -- docs/docs; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit regenerated docs
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          SOURCE_PR: ${{ steps.evaluate.outputs.source_pr }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/docs
+          git commit -m "docs: regenerate for PR #$SOURCE_PR"
+
+      - name: Push docs updates
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          BRANCH: ${{ steps.evaluate.outputs.docs_branch }}
+        run: |
+          git push --force-with-lease origin "$BRANCH"
+
+      - name: Add regeneration comment
+        if: steps.evaluate.outputs.trigger == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const hasChanges = '${{ steps.changes.outputs.has_changes || '' }}' === 'true';
+            const docsPr = Number('${{ steps.evaluate.outputs.docs_pr || '0' }}');
+            const sourcePr = '${{ steps.evaluate.outputs.source_pr || '' }}';
+            const actor = context.payload.comment.user.login;
+            const body = hasChanges
+              ? `Docs regenerated from the latest code in PR #${sourcePr} by @${actor}.`
+              : `Docs regeneration requested by @${actor}, but no updates were required.`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: docsPr,
+              body,
+            });
