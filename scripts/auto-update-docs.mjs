@@ -84,6 +84,18 @@ function parseStrictJson(rawText) {
   try {
     return JSON.parse(sanitized);
   } catch (error) {
+    const repaired = fixInvalidEscapeSequences(sanitized);
+    if (repaired !== sanitized) {
+      try {
+        return JSON.parse(repaired);
+      } catch (innerError) {
+        throw new Error(
+          `Failed to parse model JSON response after repair: ${
+            innerError instanceof Error ? innerError.message : String(innerError)
+          }`
+        );
+      }
+    }
     throw new Error(`Failed to parse model JSON response: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -131,6 +143,45 @@ function escapeControlCharactersInJson(text) {
 
     if (char === '"') {
       inString = true;
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
+function fixInvalidEscapeSequences(text) {
+  let result = '';
+  let inString = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (char === '"' && text[index - 1] !== '\\') {
+      inString = !inString;
+      result += char;
+      continue;
+    }
+
+    if (inString && char === '\\') {
+      const next = text[index + 1];
+      if (!next) {
+        result += '\\\\';
+        continue;
+      }
+
+      if (next === 'u') {
+        const hex = text.slice(index + 2, index + 6);
+        const validUnicodeEscape = /^[0-9a-fA-F]{4}$/.test(hex);
+        if (!validUnicodeEscape) {
+          result += '\\\\';
+          continue;
+        }
+      } else if (!['"', '\\', '/', 'b', 'f', 'n', 'r', 't'].includes(next)) {
+        result += '\\\\';
+        continue;
+      }
     }
 
     result += char;
