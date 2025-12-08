@@ -35,7 +35,7 @@ jobs:
 
       - name: Fetch source commits
         run: |
-          git fetch origin '${{ steps.context.outputs.code_branch }}' --depth=0
+          git fetch origin '${{ steps.context.outputs.code_branch }}'
 
       - name: Generate documentation updates
         env:

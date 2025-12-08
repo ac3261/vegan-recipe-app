@@ -1,4 +1,4 @@
-name: Auto Docs Prep
+name: Auto Docs Updates
 
 on:
   pull_request_target:
@@ -7,7 +7,8 @@ on:
       - main
 
 jobs:
-  prepare-autodocs-pr:
+  propose-docs:
+    name: propose-docs
     if: >-
       github.event.pull_request.base.ref == 'main' &&
       !startsWith(github.event.pull_request.head.ref, 'autodocs/') &&
