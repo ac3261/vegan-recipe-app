@@ -82,12 +82,48 @@ function buildPrompt({baseSha, headSha, changedFiles, diffSnippet}) {
 
 function extractJson(text) {
   const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) {
+  if (start === -1) {
     throw new Error('Model response did not contain JSON.');
   }
-  const jsonText = text.slice(start, end + 1);
-  return parseStrictJson(jsonText);
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === '{') {
+      depth += 1;
+    } else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        const jsonText = text.slice(start, index + 1);
+        return parseStrictJson(jsonText);
+      }
+    }
+  }
+
+  throw new Error('Model response JSON appears incomplete.');
 }
 
 function parseStrictJson(rawText) {
