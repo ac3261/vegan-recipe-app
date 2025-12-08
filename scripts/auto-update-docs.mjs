@@ -33,21 +33,85 @@ function listChangedFiles(baseSha, headSha) {
 }
 
 function filterRelevantFiles(files) {
-  return files.filter((file) => !file.startsWith('docs/'));
+  const filtered = files.filter((file) => !file.startsWith('docs/'));
+  return sortByPriority(filtered);
 }
 
-function getDiff(baseSha, headSha, files) {
+function sortByPriority(files) {
+  const weights = [
+    {prefix: 'src/app', weight: 0},
+    {prefix: 'src/', weight: 1},
+    {prefix: 'scripts/', weight: 2},
+    {prefix: 'lib/', weight: 3},
+    {prefix: '.github/', weight: 4},
+  ];
+
+  const getWeight = (path) => {
+    for (const {prefix, weight} of weights) {
+      if (path.startsWith(prefix)) {
+        return weight;
+      }
+    }
+    return 10;
+  };
+
+  return [...files].sort((a, b) => {
+    const diff = getWeight(a) - getWeight(b);
+    return diff !== 0 ? diff : a.localeCompare(b);
+  });
+}
+
+function getDiff(baseSha, headSha, files, maxLength) {
   if (files.length === 0) {
     return '';
   }
-  const result = spawnSync('git', ['diff', `${baseSha}`, `${headSha}`, '--', ...files], {
+
+  let combined = '';
+  let truncated = false;
+
+  for (const file of files) {
+    const diff = diffForFile(baseSha, headSha, file);
+    if (!diff) {
+      continue;
+    }
+
+    const remaining = maxLength - combined.length;
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+
+    if (diff.length > remaining) {
+      combined += diff.slice(0, remaining);
+      truncated = true;
+      break;
+    }
+
+    combined += diff;
+    if (!combined.endsWith('\n')) {
+      combined += '\n';
+    }
+  }
+
+  if (truncated) {
+    combined += '\n...\n[Diff truncated]';
+  }
+
+  return combined;
+}
+
+function diffForFile(baseSha, headSha, file) {
+  const args = ['diff', `${baseSha}`, `${headSha}`, '--', file];
+  const result = spawnSync('git', args, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+
   if (result.status !== 0) {
-    const message = result.stderr || result.stdout || 'Failed to read diff';
+    const message = result.stderr || result.stdout || `Failed to read diff for ${file}`;
     throw new Error(message.trim());
   }
+
   return result.stdout;
 }
 
@@ -347,19 +411,19 @@ async function main() {
 
   const changedFiles = listChangedFiles(baseSha, headSha);
   const relevantFiles = filterRelevantFiles(changedFiles);
+  const maxLength = 16000;
 
   if (relevantFiles.length === 0) {
     console.log('No non-docs changes detected; skipping documentation update.');
     return;
   }
 
-  const diff = getDiff(baseSha, headSha, relevantFiles);
+  const diff = getDiff(baseSha, headSha, relevantFiles, maxLength);
   if (!diff) {
     console.log('Diff empty; skipping documentation update.');
     return;
   }
 
-  const maxLength = 12000;
   const diffSnippet = diff.length > maxLength ? `${diff.slice(0, maxLength)}\n...\n[Diff truncated]` : diff;
 
   const prompt = buildPrompt({baseSha, headSha, changedFiles: relevantFiles, diffSnippet});
