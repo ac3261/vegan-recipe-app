@@ -1,0 +1,81 @@
+name: Auto Docs Generate
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+    branches:
+      - main
+
+jobs:
+  generate-docs:
+    if: >-
+      startsWith(github.event.pull_request.head.ref, 'autodocs/') &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.fork == false &&
+      !(github.actor == 'github-actions[bot]' && github.event.action == 'synchronize')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Resolve autodocs context
+        id: context
+        run: node scripts/get-autodocs-context.mjs '${{ github.event.pull_request.head.ref }}'
+
+      - name: Fetch source commits
+        run: |
+          git fetch origin '${{ steps.context.outputs.code_branch }}' --depth=0
+
+      - name: Generate documentation updates
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          node scripts/auto-update-docs.mjs '${{ steps.context.outputs.base }}' '${{ steps.context.outputs.head }}'
+
+      - name: Detect documentation changes
+        id: changes
+        run: |
+          if [[ -n "$(git status --short -- docs/docs)" ]]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install docs dependencies
+        if: steps.changes.outputs.has_changes == 'true'
+        run: npm ci --prefix docs
+
+      - name: Build docs
+        if: steps.changes.outputs.has_changes == 'true'
+        run: npm run build --prefix docs
+
+      - name: Commit documentation updates
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git config user.name "docs-bot"
+          git config user.email "docs-bot@users.noreply.github.com"
+          git add docs/docs
+          git commit -m "docs: update for PR #${{ steps.context.outputs.code_pr }}"
+
+      - name: Push documentation updates
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          DOCS_BOT_TOKEN: ${{ secrets.DOCS_BOT_TOKEN }}
+        run: |
+          if [ -z "$DOCS_BOT_TOKEN" ]; then
+            echo "DOCS_BOT_TOKEN secret is required to push documentation changes." >&2
+            exit 1
+          fi
+          git remote set-url origin "https://x-access-token:${DOCS_BOT_TOKEN}@github.com/${{ github.repository }}.git"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
