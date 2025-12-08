@@ -47,6 +47,7 @@ Constraints:
 - ${extraIngredientGuidance}
 - Seasonings listed above are provided by the cook. Use them when they reasonably fit the recipe and list them explicitly in the ingredients section; they do not count toward the extra ingredient allowance.
 - Only reference ingredients in the instructions if they appear in the ingredients list above (basic staples excluded).
+ - Include saturated fat and total sugars in the nutrition summary so it mirrors standard nutrition labels.
 ${payload.notes ? `- Additional notes from the cook: ${payload.notes}.` : ""}
 
 Respond in strict JSON with the following structure:
@@ -64,6 +65,8 @@ Respond in strict JSON with the following structure:
       "protein": string,
       "carbohydrates": string,
       "fats": string,
+      "saturatedFats": string,
+      "sugars": string,
       "fiber": string
     },
     "micros": [string]
